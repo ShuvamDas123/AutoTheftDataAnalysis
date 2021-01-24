@@ -1,0 +1,396 @@
+---
+title: "Temperature and Autothefts"
+author: "Shuvam Das, Ziwen Han, Aidan Lau, Ryan Pelchat, STA130 TUT0207, Groupnum=???"
+subtitle: The subtitle of my project
+output:
+  beamer_presentation: default
+  ioslides_presentation: default
+  widescreen: yes
+---
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# echo=FALSE will stop the code chunk from appearing in the knit document
+# warning=FALSE and message=FALSE will stop R messages from appearing in the knit document
+#loading proper libraries
+library(tidyverse)
+library(knitr)
+# loading neighbourhood data
+neighbourhood <- read.csv(file="2016neigh.csv") %>% select(Hood_ID, pop_2016)
+#loading autothefts data and joining with neighbourhood data
+thefts <- read.csv(file="auto_thefts.csv") %>% select(occurrencedate, Neighbourhood, Hood_ID) %>% full_join(y=neighbourhood, key="Hood_ID")
+#loading weather data from 5 years
+T14 <- read.csv(file="2014 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T15 <- read.csv(file="2015 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T16 <- read.csv(file="2016 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T17 <- read.csv(file="2017 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T18 <- read.csv(file="2018 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+#joining weather data into one data frame and removing NA values
+temperature <- rbind(T14, T15, T16, T17, T18)
+temperature <- temperature %>% mutate(Mean.Temp.C = round(Mean.Temp.C))
+temperature
+#joining weather data (temperature) with thefts by date
+```
+Data wrangling starts here!
+```{r}
+date <- rep(NA, 18178)
+for (i in 1:18178){
+  date[i] <- substring(thefts$occurrencedate[i],1,10)
+}
+```
+
+
+```{r}
+#cleaing up thefts data more
+thefts <- thefts %>% mutate(date=date) %>% rename(Date.Time=date) %>% select(Neighbourhood, Hood_ID,pop_2016,Date.Time)
+```
+
+
+```{r}
+#joining thefts to temperature that day
+autothefts <- inner_join(x=thefts,y=temperature, key="Date.Time") %>% filter(!is.na(Mean.Temp.C))
+```
+
+```{r}
+#add a new variable to classify by high/low crime rate neighbourhood (rate per 1000) 
+crimerate <- autothefts %>% group_by(Hood_ID) %>% summarise(rate=1000*n()/mean(pop_2016))
+autothefts <- full_join(x=autothefts,y=crimerate,key="Hood_ID")
+autothefts <- autothefts %>% mutate(crimerate=ifelse(rate>=median(rate),"High","Low"))
+```
+```{r}
+#histogram of crime rate distribution
+ggplot(data=autothefts) + aes(x=rate) + geom_histogram(bins=100, color="black", fill="blue")
+#right skewed data so we use median
+```
+```{r}
+#histogram of temperature distributions
+ggplot(data=autothefts) + aes(x=Mean.Temp.C) + geom_histogram(bins=50, color="black", fill="red")
+#left skew so we use median again
+```
+
+
+```{r}
+#add a new variable to classify by hot and cold days by median 
+autothefts <- autothefts %>% mutate(hot_cold=ifelse(Mean.Temp.C>=median(Mean.Temp.C), "Hot", "Cold"))
+```
+
+```{r}
+#State H0: there is no difference, we sim under this assumption
+#State HA: there is a difference (significant)
+#select only high risk inputs
+riskycars <- autothefts %>% filter(crimerate=="High")
+#calculate test statistic as difference in crime rate on hot and cold days
+riskyhotcoldcars <- riskycars %>% group_by(hot_cold) %>% summarise(means=mean(rate))
+riskyteststat <- diff(riskyhotcoldcars$means) %>% as.numeric()
+#simulate the difference in crime rate(per 1000) on hot vs cold days by shuffling labels
+reps1 <- 5000
+sim_diff <- rep(NA,reps1)
+set.seed(130)
+for (i in 1:reps1){
+  sim <- riskycars %>% mutate(hot_cold=sample(hot_cold)) %>% group_by(hot_cold) %>% summarise(means=mean(rate)) %>% summarise(diff(means)) %>% as.numeric()
+  sim_diff[i] <- sim
+}
+```
+
+
+```{r}
+ggplot(data_frame(data=sim_diff)) + aes(x=data) + geom_histogram(bins=30, color="black", fill="grey") + geom_vline(xintercept=riskyteststat, color="red") + geom_vline(xintercept=-riskyteststat, color="red")
+#Graph distribution and show p value
+
+```
+```{r}
+#calculate p value
+pvaluerisky <- data_frame(data=sim_diff) %>% filter(data<=riskyteststat|data>=-riskyteststat) %>% 
+summarise(pvalue=n()/reps1)
+pvaluerisky
+#make a conclusion
+```
+
+
+```{r}
+#do the same thing as above for low risk neighbourhoods
+#State H0: there is no difference
+#State HA: there is a difference (significant)
+#select only low risk inputs
+notriskycars <- autothefts %>% filter(crimerate=="Low")
+#calculate test statistic as difference in crime rate on hot and cold days
+notriskyhotcoldcars <- notriskycars %>% group_by(hot_cold) %>% summarise(means=mean(rate))
+notriskyteststat <- diff(notriskyhotcoldcars$means) %>% as.numeric()
+#simulate the difference in crime rate(per 1000) on hot vs cold days by shuffling labels
+sim_diff2 <- rep(NA,reps1)
+set.seed(130)
+for (i in 1:reps1){
+  sim <- notriskycars %>% mutate(hot_cold=sample(hot_cold)) %>% group_by(hot_cold) %>% summarise(means=mean(rate)) %>% summarise(diff(means)) %>% as.numeric()
+  sim_diff2[i] <- sim
+}
+```
+
+
+```{r}
+ggplot(data_frame(data=sim_diff2)) + aes(x=data) + geom_histogram(bins=30, color="black", fill="grey") + geom_vline(xintercept=notriskyteststat, color="red") + geom_vline(xintercept=-notriskyteststat, color="red")
+#Graph distribution and show p value
+```
+
+
+
+```{r}
+#calculate p value
+pvaluenotrisky <- data_frame(data=sim_diff2) %>% filter(data<=notriskyteststat|data>=-notriskyteststat) %>% 
+summarise(pvalue=n()/reps1)
+pvaluenotrisky
+#make a conclusion
+```
+
+```{r}
+#trend with error
+#name axis
+ggplot(data=autothefts) + aes(x=Mean.Temp.C, y=rate) + geom_smooth() 
+#+ scale_y_discrete(breaks = c(0,10,20,30,40,50), labels=c("0","10","20","30","40","50"), limits=c(0,50))#we have to explain this
+```
+
+
+```{r}
+#scatterplot
+ggplot(data=autothefts) + aes(x=Mean.Temp.C, y=rate, color = Hood_ID) + geom_point()
+```
+
+# A Section Heading on its own page
+
+## A heading that starts on a new page
+
+This document shows a few basics on making slides with R markdown.
+
+To produce the slides, Knit to HMTL (ioslides).
+
+(You can also knit to PDF if you have LaTeX installed on your computer.)
+
+
+---
+
+Three dashes starts a new page when it is not started by a new header.
+
+---
+
+### This is a heading that doesn't start a new page
+
+You can make text **bold** or in *italics*.
+
+To make bullet points, start the points after a blank line:
+ 
+- point one
+- another point
+
+
+---
+
+Include some R output
+
+```{r}
+ggplot(cars, aes(x=speed, y=dist)) + geom_point()
+```
+
+---
+
+Include the output without showing the code and R messages (which is what you want for your poster presentation).  This R code chunk also changes the size of the plot.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=3}
+#ggplot(cars, aes(x=speed, y=dist)) + geom_point()
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=3}
+pred_probs1 <- predict(object = tree, newdata = test, type = "prob")
+ #pred_probs2 <- predict(object = tree2, newdata = test, type = "prob")
+# 
+# # Create R objects which will be used to create the ROC plot
+# ### TREE 1 ###
+ pred1 <- ROCR::prediction(predictions = pred_probs1[,2],
+                          labels=test$crimerate)
+ perf1 <- ROCR::performance(pred1, 'tpr', 'fpr')
+ # Create a data framewith tpr and fpr -> need to use data.frame here
+ perf_df1 <- data.frame(perf1@x.values, perf1@y.values)
+ names(perf_df1) <- c("fpr", "tpr")
+
+# 
+# # Data to plot
+ plot_dat <- cbind(rbind(perf_df1), 
+                   model = c(rep("Tree B",nrow(perf_df1))))
+# 
+# 
+# # Plot the ROC curve
+ ggplot(data = plot_dat, aes(x = fpr, y = tpr, colour = model)) + 
+   geom_line() + geom_abline(intercept = 0, slope = 1, lty = 3) + 
+   ylab(perf1@y.name) + 
+   xlab(perf1@x.name)
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=3}
+
+#summary(lm(rate~Mean.Temp.C,data=train))$coefficients
+
+reg <- lm(rate~ ( Mean.Temp.C) * (hot_cold + crimerate), data=train)
+reg
+
+summary(reg)$r.squared
+
+#ggplot(data = autothefts )+ aes(x = hot_cold * crimerate, y = rate) + geom_point()
+```
+
+This plot shows that there is a positive relationship between distance and speed.
+
+## Read more
+
+There is more information on R markdown on the course website at [https://ntaback.github.io/UofT_STA130/Rmarkdownforclassreports.html](https://ntaback.github.io/UofT_STA130/Rmarkdownforclassreports.html)
+
+For more on creating an `ioslides` presentation see [https://rmarkdown.rstudio.com/ioslides_presentation_format.html](https://rmarkdown.rstudio.com/ioslides_presentation_format.html)
+
+# Headings you should include in your project
+
+## Introduction
+
+Include here a few sentences to introduce the problem and provide context. You might want to briefly summarize the data in words (what is the data and what is it used for). You can present the questions you are investigating here. 
+
+
+## Objectives (optional)
+
+You can list the questions of interest in complete English sentences here to highlight them. 
+
+## Data Summary (optional)
+
+Here you can explain how you cleaned the data and created variables suitable for answering your questions. 
+You can also include graphical displays that either motivated or address the questions.
+
+## Statistical Methods
+
+Describe here what you have done to the data without presenting any results (output). If you want to indicate variables by symbols or variable names, define them here. 
+
+## Results
+
+Present the main results here, in order of importance, related to the questions asked. You might use tables or graphs, or other ways to summarize your results.
+
+## Conclusion
+
+Give your main conclusions here. Follow the order of questions you presented. 
+
+Here you can also mention any additional considerations, concerns, or issues you might have. For example, if the results were unexpected, you can discuss this and perhaps offer possible explanations.
+
+## Acknowledgements (optional)
+
+If you received any help from someone other than your team members you can acknowledge them. For example:   
+*The authors would like to thank "TA name" for helpful suggestions and comments that improved the presentation of this poster.*
+
+```{r}
+autothefts <- autothefts %>% mutate(Mean.Temp.C=round(Mean.Temp.C))
+autothefts %>% group_by(Mean.Temp.C) %>% summarise(n=n()) %>%
+  ggplot(aes(x=Mean.Temp.C,y=n)) + geom_point()
+# 
+# 
+# library(tidyverse)
+# library(knitr)
+# library(rpart)
+# library(partykit)
+# opts_chunk$set(warning = FALSE, message = FALSE)
+# set.seed(2072)
+# n <- nrow(autothefts)
+# training_indices<- sample(1:n, size = round(0.8*n))
+# train <- autothefts[training_indices,]
+# #?rpart
+# test <- autothefts[-training_indices,]
+# tree <- rpart(crimerate ~ Mean.Temp.C, data = train)
+# 
+# plot(as.party(tree), type = "simple", gp = gpar(cex=0.8))
+# 
+# 
+# prediction <- predict(object = tree, newdata = test, type = "prob")
+# table(prediction[,2] >= 0.8, test$crimerate)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# echo=FALSE will stop the code chunk from appearing in the knit document
+# warning=FALSE and message=FALSE will stop R messages from appearing in the knit document
+#loading proper libraries
+library(tidyverse)
+library(knitr)
+# loading neighbourhood data
+neighbourhood <- read.csv(file="2016neigh.csv") %>% select(Hood_ID, pop_2016)
+#loading autothefts data and joining with neighbourhood data
+thefts <- read.csv(file="auto_thefts.csv") %>% select(occurrencedate, Neighbourhood, Hood_ID) %>% full_join(y=neighbourhood, key="Hood_ID")
+#loading weather data from 5 years
+T14 <- read.csv(file="2014 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T15 <- read.csv(file="2015 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T16 <- read.csv(file="2016 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T17 <- read.csv(file="2017 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+T18 <- read.csv(file="2018 Toronto.csv") %>% select(Date.Time,Mean.Temp.C)
+#joining weather data into one data frame and removing NA values
+temperature <- rbind(T14, T15, T16, T17, T18)
+temp_day <- temperature %>% mutate(Mean.Temp.C = round(Mean.Temp.C))
+temp_day <- temp_day %>% filter(!is.na(Mean.Temp.C)) %>% group_by(Mean.Temp.C) %>% summarise(no_of_days = n())
+
+date <- rep(NA, 18178)
+for (i in 1:18178){
+  date[i] <- substring(thefts$occurrencedate[i],1,10)
+}
+```
+
+
+```{r}
+#cleaing up thefts data more
+thefts <- thefts %>% mutate(date=date) %>% rename(Date.Time=date) %>% select(Neighbourhood, Hood_ID,pop_2016,Date.Time) %>% filter(Hood_ID !=1) %>%filter(Hood_ID !=21)
+```
+
+
+```{r}
+#joining thefts to temperature that day
+autothefts <- inner_join(x=thefts,y=temperature, key="Date.Time") %>% filter(!is.na(Mean.Temp.C))
+
+autothefts <- autothefts %>% mutate(Mean.Temp.C=round(Mean.Temp.C))
+autothefts <- autothefts %>% group_by(Mean.Temp.C) %>% summarise(no_of_crimes=n()) 
+#
+
+autothefts <- full_join(x = autothefts, y = temp_day, key ="Mean.Temp.C" )
+
+autothefts <- autothefts %>% mutate(no_of_crime_per_day_temp = no_of_crimes/no_of_days) 
+
+```
+
+
+```{r}
+#autothefts
+
+# reg <- lm(no_of_crime_per_day_temp~ Mean.Temp.C, data=autothefts)
+# cor(x = autothefts$Mean.Temp.C, y = autothefts$no_of_crime_per_day_temp)
+# summary(reg)$coefficients
+
+ggplot(data=autothefts) +  aes(x=Mean.Temp.C,y=no_of_crime_per_day_temp) + geom_point() + geom_smooth(method = 'lm', se= FALSE)
+
+reg <- lm(no_of_crime_per_day_temp~ Mean.Temp.C, data=autothefts)
+summary(reg)$r.squared
+summary(reg)$coefficients
+
+#joining weather data (temperature) with thefts by date
+```
+
+```{r}
+set.seed(2072)
+n <- nrow(autothefts)
+training_indices<- sample(1:n, size = round(0.5*n))
+train <- autothefts[training_indices,]
+y_train <- train$no_of_crime_per_day_temp
+test <- autothefts[-training_indices,]
+y_test <- test$no_of_crime_per_day_temp
+
+model_train <- lm(no_of_crime_per_day_temp ~ Mean.Temp.C, data=train)
+
+yhattrain <- predict(model_train, newdata=train)
+yhattest <- predict(model_train, newdata=test)
+
+trainRMSE <- sqrt(sum((y_train-yhattrain)^2)/nrow(train))
+testRMSE <- sqrt(sum((y_test-yhattest)^2)/nrow(test))
+
+data_frame(Model=c("Predictions"), RMSEtrain=c(trainRMSE), RMSEtest=c(testRMSE))
+```
+
